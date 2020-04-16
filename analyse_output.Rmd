@@ -1,0 +1,418 @@
+```{r init} 
+library(ggplot2)
+library(tidyverse)
+library(foreach)
+library(parallel)
+library(ggsignif)
+library(doParallel)
+library(patchwork)
+
+cols <- rep(c("dodgerblue2","#E31A1C", # red
+              "green4",
+              "#6A3D9A", # purple
+              "#FF7F00", # orange
+              "black","steelblue4",
+              "skyblue2","#FB9A99", # lt pink
+              "palegreen2",
+              "#CAB2D6", # lt purple
+              "#FDBF6F", # lt orange
+              "gray70", "khaki2",
+              "maroon","orchid1","deeppink1","blue1","gold1",
+              "darkturquoise","green1","yellow4","yellow3",
+              "darkorange4","brown"),20)
+
+trace(grDevices:::png, quote({
+  if (missing(type) && missing(antialias)) {
+    type <- "cairo-png"
+    antialias <- "subpixel"
+  }
+}), print = FALSE)
+
+dir = "~/../Dropbox/HGTvsDUP_pythonruns/0408_Final_Set/"
+dir = "~/../Dropbox/HGTvsDUP_pythonruns/2703_highcosts001/"
+#dir = "~/../Dropbox/"
+
+dupfiles = list.files(dir,pattern="dup_[0-9]+.dat")
+hgtfiles = list.files(dir,pattern="hgt_[0-9]+.dat")
+
+# Register parallel 
+registerDoParallel(core=detectCores()-1)
+start_time <- Sys.time()
+
+# Read dupfiles
+all_dupdata <- foreach(i=1:length(dupfiles),.combine=rbind) %dopar% 
+  {
+    dupfile = paste0(dir,dupfiles[i])
+    x<-read.table(dupfile,header=T,skip=0, nrow = length(readLines(dupfile)) - 1)
+    x$treatment = 'dup'
+    x$duplo = as.numeric(i)
+    x
+  }
+
+all_hgtdata <- foreach(i=1:length(hgtfiles),.combine=rbind) %dopar% 
+  {
+    hgtfile = paste0(dir,hgtfiles[i])
+    x<-read.table(hgtfile,header=T,skip=0, nrow = length(readLines(hgtfile)) - 1)
+    x$treatment = 'hgt'
+    x$duplo =  as.numeric(i)
+    x
+  }
+
+end_time <- Sys.time()
+end_time - start_time
+stopImplicitCluster()
+
+all_data <- rbind(all_dupdata,all_hgtdata)
+
+wt = 1
+
+
+```
+
+
+```{r plot all duplos}
+
+
+zoomy = 0.965
+dp_min = 0.8
+dp_max = 0.9
+
+data <- all_data %>% filter(as.numeric(duplo)>1)
+data <- data %>% group_by(paste(treatment,duplo)) %>% mutate(mt=max(Time))
+xmin = min(data$mt)
+data <- data %>% filter(Time < xmin)
+left = max(data$Time)*dp_min
+right = max(data$Time)*dp_max
+
+xmin = min(data$mt)
+xmin = 20000
+
+fit <- data %>% ggplot(aes(x=Time,y=Avgfit,grp=as.factor(treatment),col=as.factor(treatment))) +
+  #geom_line(aes(alpha=(duplo==wt))) +
+  geom_line(aes(grp=as.factor(duplo)),alpha=0.2) +
+  ggtitle("Fitness over time (multiple replicates)")+
+  geom_vline(aes(xintercept=max(Time)*dp_min)) +
+  geom_vline(aes(xintercept=max(Time)*dp_max)) +
+  stat_summary(size=1.0,fun.y=mean,geom="line")+
+  xlim(0,xmin)+
+  ylab("Fitness")+
+ # ylim(max(data$Avgfit,na.rm=T)*zoomy,NA)+
+   ylim(max(data$Avgfit,na.rm=T)*zoomy,NA)+
+  scale_alpha_discrete(range=c(0.3,1))+
+  guides(alpha=F)+
+  labs(col="Dup / HGT")+
+  theme_bw()+
+  scale_color_manual(values=cols)
+
+fit2 <- data %>% filter(Time > max(Time)*dp_min, Time < max(Time)*dp_max) %>% ggplot(aes(x=paste(treatment,duplo),y=Avgfit,grp=paste(treatment,duplo),fill=as.factor(treatment))) +
+  ggtitle("Fitness (between black lines)")+
+  xlab("")+
+  ylab("Fitness")+
+  geom_violin(aes()) +
+  ylim(max(data$Avgfit,na.rm=T)*zoomy,NA)+
+  theme_bw()+
+  guides(fill=F)+
+  labs(col="Dup / HGT")+
+  scale_fill_manual(values=cols)
+
+gplot2 <- data %>% ggplot(aes(x=Time,y=Avglen,grp=as.factor(treatment),col=treatment)) +
+  #geom_line(aes(alpha=(duplo==wt))) +
+  geom_line(aes(grp=paste(treatment,duplo)),alpha=0.3) +
+  ggtitle("Genome sizes over time (multiple replicates)")+
+  stat_summary(size=1.0,fun.y=mean,geom="line")+
+  xlim(0,xmin)+
+  ylab("Genome size")+
+  geom_vline(xintercept=left) +
+  geom_vline(xintercept=right) +
+  theme_bw() +
+  ylim(0,NA)+
+  coord_cartesian(ylim=c(0,40))+
+  guides(alpha=F)+
+  labs(col="Dup / HGT")+
+  scale_alpha_discrete(range=c(0.3,1))+
+  scale_color_manual(values=cols) 
+
+gplot <- data %>% filter(Time > left, Time < right) %>% ggplot(aes(x=paste(treatment,duplo),y=Avglen,grp=paste(treatment,duplo),fill=as.factor(treatment))) +
+  ggtitle("Genome sizes (between black lines)")+
+  xlab("")+
+  geom_violin(aes(),draw_quantiles=c(0.5),bw=0.2)+
+  # geom_signif(comparisons=list(c("dup","hgt")))+
+  theme_bw() +
+   ylab("Genome size")+
+  guides(alpha=F)+
+  labs(fill="Dup / HGT")+
+  ylim(0,NA)+
+  scale_alpha_discrete(range=c(0.3,1))+
+  scale_fill_manual(values=cols) 
+
+
+
+
+x1 <- data %>% filter(Time > max(Time)*dp_min, Time < max(Time)*dp_max) %>% ggplot(aes(x=paste(treatment),y=Avgfit,grp=paste(treatment),fill=as.factor(treatment))) +
+  geom_violin(aes(),draw_quantiles=c(0.5))+
+  guides(alpha=F)+
+   ylab("Fitness")+
+  labs(fill="Dup / HGT")+
+  ggtitle("Fitness differences")+
+  xlab("")+
+  ylim(max(data$Avgfit,na.rm=T)*zoomy,NA)+
+  geom_signif(comparisons=list(c("dup","hgt")))+
+  theme_bw()+
+  scale_fill_manual(values=cols)
+
+x2 <- data %>% group_by(paste(duplo)) %>% filter(Time > max(Time)*dp_min, Time < max(Time*dp_max)) %>% ggplot(aes(x=paste(treatment),y=Avglen,grp=paste(treatment),fill=as.factor(treatment))) +
+  geom_violin(aes(),draw_quantiles=c(0.5),bw=1.0)+
+  geom_signif(comparisons=list(c("dup","hgt")))+
+  theme_bw() +
+   ylab("Genome size")+
+  guides(alpha=F)+
+  xlab("")+
+  labs(fill="Dup / HGT")+
+  ggtitle("Genome size differences")+
+  
+  ylim(0,NA)+
+  scale_alpha_discrete(range=c(0.3,1))+
+  scale_fill_manual(values=cols) 
+
+data2 <- gather(all_data %>% filter(as.numeric(duplo)>1), key,val,-c(Time,Avglen,Avgfit,AvgDup,AvgDel,AvgHgt,treatment,duplo,AvgDup))
+
+
+exprs <- data2 %>% filter(grepl('expr',key)) %>% ggplot(aes(x=Time,y=val,col=treatment,grp=treatment)) +
+  geom_line(alpha=0.2,aes(grp=paste(treatment,duplo))) +
+  stat_summary(fun.y=mean,geom="line",size=1) +
+  geom_vline(xintercept=left) +
+  geom_vline(xintercept=right) +
+  scale_alpha_discrete(range=c(0.3,1))+
+  guides(alpha=F)+
+   xlim(0,xmin)+
+  
+  theme_bw()+
+  scale_color_manual(values=cols) 
+
+
+exprs2 <- data2 %>% filter(grepl('expr',key)) %>% filter(Time > max(Time)*dp_min, Time < max(Time*dp_max)) %>% ggplot(aes(x=treatment,y=val,grp=paste(treatment,duplo),fill=treatment)) +
+  ggtitle("(between black lines)")+
+  geom_violin(bw=0.01,draw_quantiles=c(0.5)) +
+  scale_alpha_discrete(range=c(0.3,1))+
+  #geom_signif(comparisons=list(c("dup","hgt")))+
+  theme_bw()+
+  guides(alpha=F)+
+  scale_fill_manual(values=cols) 
+
+x3 <- data2 %>% filter(grepl('expr',key)) %>%  filter(Time > left, Time < right) %>% ggplot(aes(x=treatment,y=val,grp=paste(treatment),fill=treatment)) +
+  ggtitle("(between black lines)")+
+  geom_violin(bw=0.005,draw_quantiles=c(0.5)) +
+  scale_alpha_discrete(range=c(0.3,1))+
+  #geom_signif(comparisons=list(c("dup","hgt")))+
+  theme_bw()+
+  guides(alpha=F)+
+  scale_fill_manual(values=cols) 
+
+
+x2+x3
+# {  {gplot2 + gplot} + plot_layout(ncol=1) - x2 + plot_layout(widths=c(4,1)) }  +
+#   plot_layout(ncol=2) + plot_annotation(title=paste("Genomesizes in mini-model from dir", dir))
+# 
+#  {  {fit + fit2} + plot_layout(ncol=1) - x1 + plot_layout(widths=c(4,1)) } +
+#    plot_layout(ncol=2) + plot_annotation(title=paste("Fitness in mini-model from dir", dir))
+#    
+#  {  {exprs + exprs2} + plot_layout(ncol=1) - x3 +  plot_layout(width=c(4,1)) } +
+#    plot_layout(ncol=2) + plot_annotation(title=paste("Expression in mini-model from dir", dir))
+
+
+
+```
+
+```{r plot cummuts}
+
+data <- all_data %>% filter(Time<100000, duplo>1)
+data <- data %>% group_by(treatment,duplo) %>% mutate(cumlen=cumsum(Avglen))
+
+dups <- data %>%  ggplot(aes(x=Time,y=AvgDup,grp=as.factor(treatment),col=as.factor(treatment))) +
+  #geom_line(aes(alpha=(duplo==wt))) +
+  geom_line(aes(grp=as.factor(duplo)),alpha=0.3) +
+  geom_line(aes(y=AvgHgt,grp=as.factor(duplo)),lty=2,alpha=0.3) +
+  #stat_summary(fun.y=mean,geom="line",size=1)+
+  #stat_summary(aes(y=AvgHgt),fun.y=mean,geom="line",size=1)+
+  theme_bw()+
+  scale_alpha_discrete(range=c(0.3,1))+
+  scale_color_manual(values=cols)
+
+dups2 <- data %>% ggplot(aes(x=Time,y=AvgDup,grp=as.factor(treatment),col=as.factor(treatment))) +
+  #geom_line(aes(alpha=(duplo==wt))) +
+  #geom_line(aes(grp=as.factor(duplo)),alpha=0.3) +
+  #geom_line(aes(y=AvgHgt,grp=as.factor(duplo)),alpha=0.3) +
+  #stat_summary(fun.y=mean,geom="line",size=1)+
+  #stat_summary(aes(y=AvgHgt),fun.y=mean,geom="line",size=1)+
+  theme_bw()+
+  scale_alpha_discrete(range=c(0.3,1))+
+  scale_color_manual(values=cols)
+
+dels <- data %>% ggplot(aes(x=Time,y=AvgDel,grp=as.factor(treatment),col=as.factor(treatment))) +
+  #geom_line(aes(alpha=(duplo==wt))) +
+  geom_line(aes(grp=as.factor(duplo)),alpha=0.3) +
+  stat_summary(fun.y=mean,geom="line",size=1)+
+  theme_bw()+
+  scale_alpha_discrete(range=c(0.3,1))+
+  scale_color_manual(values=cols)
+
+dels2 <- data %>% ggplot(aes(x=Time,y=AvgDel/cumlen,grp=as.factor(treatment),col=as.factor(treatment))) +
+  #geom_line(aes(alpha=(duplo==wt))) +
+  #geom_line(aes(grp=as.factor(duplo)),alpha=0.3) +
+  stat_summary(fun.y=mean,geom="line",size=1)+
+  theme_bw()+
+  scale_alpha_discrete(range=c(0.3,1))+
+  scale_color_manual(values=cols)
+
+expr <- data %>% ggplot(aes(x=Time,y=AvgExprmut,grp=as.factor(treatment),col=as.factor(treatment))) +
+  #geom_line(aes(alpha=(duplo==wt))) +
+    geom_line(aes(grp=as.factor(duplo)),alpha=0.3) +
+
+ # stat_summary(fun.y=mean,geom="line",size=1)+
+  theme_bw()+
+  scale_alpha_discrete(range=c(0.3,1))+
+  scale_color_manual(values=cols)
+
+expr2 <- data %>% ggplot(aes(x=Time,y=AvgExprmut/cumlen,grp=as.factor(treatment),col=as.factor(treatment))) +
+  #geom_line(aes(alpha=(duplo==wt))) +
+    #geom_line(aes(grp=as.factor(duplo)),alpha=0.3) +
+
+  #stat_summary(fun.y=mean,geom="line",size=1)+
+  theme_bw()+
+  scale_alpha_discrete(range=c(0.3,1))+
+  scale_color_manual(values=cols)
+
+
+ dups + dels + expr + plot_layout(nrow=2)
+ #dups2 + dels + expr + plot_layout(nrow=2)
+
+```
+
+
+
+
+
+```{r plot 1 replicate}
+
+data <- gather(all_data, key,val,-c(Time,Avglen,Avgfit,AvgDup,AvgDel,AvgHgt,treatment,duplo,AvgDup)) 
+
+dp_min = 0.5
+dp_max = 0.7
+data <- data %>% filter(duplo%in%c(1:10))
+
+fit <- data %>% ggplot(aes(grp=as.factor(duplo),x=Time,y=Avgfit,alpha=(duplo==wt))) +
+  geom_line(aes(),size=1.0) +
+  #ylim(max(data$Avgfit,na.rm=T)*0.90,NA)+
+  facet_wrap(~treatment)+
+  theme_bw() +
+  scale_alpha_discrete(range=c(0.3,1))+
+  #ylim(1.60,1.75)+
+  
+  scale_color_manual(values=cols)
+
+
+len <- data %>% ggplot(aes(grp=as.factor(duplo),x=Time,y=Avglen)) +
+  geom_line(aes(),col="grey") +
+  facet_wrap(~treatment)+
+  theme_bw()
+
+cpnrs <- data %>% filter(grepl('cpn',key)) %>% ggplot(aes(x=Time,y=val,col=treatment,grp=paste(key,duplo),alpha=(duplo==wt))) +
+  geom_line(size=1) +
+  facet_wrap(~treatment)+
+  theme_bw()+
+  scale_alpha_discrete(range=c(0.3,1))+
+  
+  scale_color_manual(values=cols) 
+
+qual <- data %>% filter(grepl('qual',key)) %>% ggplot(aes(x=Time,y=val,col=treatment,grp=paste(key,duplo),alpha=(duplo==wt))) +
+  geom_line(size=wt) +
+  facet_wrap(~treatment)+
+  theme_bw()+
+  scale_alpha_discrete(range=c(0.3,1))+
+  scale_color_manual(values=cols) 
+
+exprs <- data %>% filter(grepl('expr',key)) %>% ggplot(aes(x=Time,y=val,col=treatment,grp=treatment)) +
+  geom_line(alpha=0.3,aes(grp=paste(treatment,duplo))) +
+  stat_summary(fun.y=mean,geom="line",size=1) +
+  facet_wrap(~treatment)+
+  geom_vline(aes(xintercept=max(Time)*dp_min)) +
+  geom_vline(aes(xintercept=max(Time)*dp_max)) +
+  scale_alpha_discrete(range=c(0.3,1))+
+  guides(alpha=F)+
+  
+  theme_bw()+
+  scale_color_manual(values=cols) 
+
+
+exprs2 <- data %>% filter(grepl('expr',key)) %>% filter(Time > max(Time)*dp_min, Time < max(Time*dp_max)) %>% ggplot(aes(x=treatment,y=val,grp=paste(treatment),fill=treatment)) +
+  ggtitle("(between black lines)")+
+  geom_violin(bw=0.005,draw_quantiles=c(0.5)) +
+  scale_alpha_discrete(range=c(0.3,1))+
+  #geom_signif(comparisons=list(c("dup","hgt")))+
+  theme_bw()+
+  guides(alpha=F)+
+  scale_fill_manual(values=cols) 
+
+
+
+
+
+{ exprs + exprs2 + plot_layout(nrow=1, widths=c(8,1)) } + plot_annotation(title="Average expression per gene at interm cost (0.005)") 
+
+
+```
+
+```{r} 
+
+dp_min = 0.4
+dp_max = 0.7
+
+data %>% filter(Time > max(Time)*dp_min, Time < max(Time*dp_max))%>% ggplot(aes(x=Avglen,y=Avgfit,grp=as.factor(duplo),col=as.factor(treatment))) +
+  geom_point() +
+  ggtitle("Fitness vs genome size")+
+  
+  #stat_summary(fun.y=mean,geom="line)+
+  
+  #ylim(max(data$Avgfit,na.rm=T)*zoomy,NA)+
+  scale_alpha_discrete(range=c(0.3,1))+
+  guides(alpha=F)+
+  labs(col="Dup / HGT")+
+  theme_bw()+
+  scale_color_manual(values=cols)
+
+```
+
+```{r}
+library(gganimate)
+library(gifski)
+data <- gather(all_data, key,val,-c(Time,Avglen,Avgfit,AvgDup,AvgDel,AvgHgt,treatment,duplo,AvgDup)) 
+
+g1<-data %>% filter(duplo==2,grepl('expr',key),Time %in% seq(0,25000,by=2500)) %>%   ggplot(aes(x=val,y=Avglen,col=treatment)) +
+  geom_point(data=data %>% filter(grepl('expr',key),Time %in% seq(0,35000,by=1000)),size=4,alpha=0.5) +
+  geom_path(col="black",arrow = arrow(),size=1) +
+  scale_alpha_discrete(range=c(0.3,1))+
+  ylim(0,50)+
+  xlim(0,1)+
+  facet_wrap(~treatment)+
+  #geom_signif(comparisons=list(c("dup","hgt")))+
+  theme_bw()+
+  xlab("e")+
+  ylab("Copy number")+
+  guides(alpha=F)+
+  scale_color_manual(values=cols) 
+
+g<-data %>% filter(grepl('expr',key),Time < 7500) %>%   ggplot(aes(x=val,y=Avglen,grp=paste(treatment,duplo),col=treatment)) +
+  geom_point(size=5,alpha=0.5,bw=0.01,draw_quantiles=c(0.5)) +
+  scale_alpha_discrete(range=c(0.3,1))+
+  ylim(0,120)+
+  xlim(0,1)+
+  #geom_signif(comparisons=list(c("dup","hgt")))+
+  theme_bw()+
+  guides(alpha=F)+
+  scale_color_manual(values=cols) +
+  transition_time(Time) +
+  ease_aes('linear') 
+
+animate(g, fps = 60,nframes=100,detail=1)
+```
+
